@@ -1,0 +1,43 @@
+FROM golang:1.21-alpine AS builder
+
+RUN apk add --no-cache git gcc musl-dev ca-certificates
+
+WORKDIR /app
+
+# Copy go workspace files
+COPY go.work go.work.sum ./
+COPY go.mod go.sum ./
+COPY core/go.mod core/go.sum ./core/
+COPY services/go.mod ./services/
+COPY libs/go.mod ./libs/
+
+# Copy full source
+COPY . .
+
+# Build relay node
+RUN cd core/relay-chain && \
+    CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-w -s" \
+    -o /app/relay \
+    ./cmd/relay/main.go
+
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates wget curl
+
+WORKDIR /app
+
+RUN mkdir -p data logs
+
+COPY --from=builder /app/relay ./relay
+
+EXPOSE 8080 3000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD wget -q --spider http://localhost:8080/api/health || exit 1
+
+ENV NODE_ENV=production
+ENV DOCKER_MODE=true
+ENV LOG_LEVEL=info
+
+CMD ["./relay", "3000"]

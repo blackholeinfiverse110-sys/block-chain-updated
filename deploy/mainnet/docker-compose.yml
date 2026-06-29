@@ -37,8 +37,8 @@ services:
   node1:
     image: bhiv/blackhole-node:${IMG_TAG:-latest}
     build:
-      context: ../../core/relay-chain
-      dockerfile: ../../deploy/mainnet/Dockerfile.blockchain
+      context: ../../
+      dockerfile: deploy/mainnet/Dockerfile.blockchain
     container_name: blackhole-node-1
     restart: unless-stopped
     user: root
@@ -67,8 +67,8 @@ services:
   node2:
     image: bhiv/blackhole-node:${IMG_TAG:-latest}
     build:
-      context: ../../core/relay-chain
-      dockerfile: ../../deploy/mainnet/Dockerfile.blockchain
+      context: ../../
+      dockerfile: deploy/mainnet/Dockerfile.blockchain
     container_name: blackhole-node-2
     restart: unless-stopped
     user: root
@@ -98,8 +98,8 @@ services:
   node3:
     image: bhiv/blackhole-node:${IMG_TAG:-latest}
     build:
-      context: ../../core/relay-chain
-      dockerfile: ../../deploy/mainnet/Dockerfile.blockchain
+      context: ../../
+      dockerfile: deploy/mainnet/Dockerfile.blockchain
     container_name: blackhole-node-3
     restart: unless-stopped
     user: root
@@ -129,8 +129,8 @@ services:
   node4:
     image: bhiv/blackhole-node:${IMG_TAG:-latest}
     build:
-      context: ../../core/relay-chain
-      dockerfile: ../../deploy/mainnet/Dockerfile.blockchain
+      context: ../../
+      dockerfile: deploy/mainnet/Dockerfile.blockchain
     container_name: blackhole-node-4
     restart: unless-stopped
     user: root
@@ -160,8 +160,8 @@ services:
   node5:
     image: bhiv/blackhole-node:${IMG_TAG:-latest}
     build:
-      context: ../../core/relay-chain
-      dockerfile: ../../deploy/mainnet/Dockerfile.blockchain
+      context: ../../
+      dockerfile: deploy/mainnet/Dockerfile.blockchain
     container_name: blackhole-node-5
     restart: unless-stopped
     user: root

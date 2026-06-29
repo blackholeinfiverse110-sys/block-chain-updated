@@ -14,24 +14,13 @@ WORKDIR /app
 
 # Copy only the necessary files for dependency resolution
 COPY go.mod go.sum ./
-RUN mkdir -p core && \
-    touch core/go.mod core/go.sum && \
-    if [ -f core/go.mod ]; then \
-        cp core/go.mod core/go.mod.bak && \
-        cp core/go.sum core/go.sum.bak; \
-    fi
+COPY core/relay-chain/go.mod core/relay-chain/go.sum ./core/relay-chain/
 
 # Download dependencies
 RUN go mod download
 
 # Copy the rest of the application
 COPY . .
-
-# Restore the original core module files if they were backed up
-RUN if [ -f core/go.mod.bak ]; then \
-        mv core/go.mod.bak core/go.mod && \
-        mv core/go.sum.bak core/go.sum; \
-    fi
 
 # Build the application
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" \

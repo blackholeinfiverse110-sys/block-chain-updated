@@ -22,6 +22,9 @@ RUN go mod download
 # Copy the rest of the application
 COPY . .
 
+# Remove development-only scripts to prevent go mod tidy from scanning them
+RUN rm -rf scripts
+
 # Build the application
 RUN go mod tidy
 RUN cd core/relay-chain && go mod tidy

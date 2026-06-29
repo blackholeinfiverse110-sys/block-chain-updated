@@ -18,6 +18,7 @@ COPY core/relay-chain/go.mod core/relay-chain/go.sum ./core/relay-chain/
 
 # Download dependencies
 RUN go mod download
+RUN cd core/relay-chain && go mod download
 
 # Copy the rest of the application
 COPY . .
@@ -26,10 +27,8 @@ COPY . .
 RUN rm -rf scripts
 
 # Build the application
-RUN go mod tidy
-RUN cd core/relay-chain && go mod tidy
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" \
-    -o /app/blockchain ./core/relay-chain/cmd/relay/main.go
+RUN cd core/relay-chain && go mod tidy && CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" \
+    -o /app/blockchain ./cmd/relay/main.go
 
 # Final runtime image
 FROM alpine:latest

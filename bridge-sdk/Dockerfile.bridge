@@ -22,6 +22,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
+RUN go mod tidy
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o bridge-sdk ./main_bridge/main.go
 
 # Final stage

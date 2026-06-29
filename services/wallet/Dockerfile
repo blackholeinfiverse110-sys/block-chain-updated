@@ -13,6 +13,7 @@ RUN go mod download
 COPY . .
 
 # Build the binary
+RUN go mod tidy
 RUN go build -o wallet .
 
 # Production stage

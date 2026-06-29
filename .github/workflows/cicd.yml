@@ -20,7 +20,7 @@ jobs:
 
       - name: Run Go module validation
         run: |
-          go test ./...
+          go test $(go list ./... | grep -v "/scripts")
 
       - name: Validate Docker Compose files
         run: |

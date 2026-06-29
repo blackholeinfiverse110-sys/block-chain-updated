@@ -73,10 +73,7 @@ jobs:
   deploy:
     name: Deploy to self-hosted production runner
     needs: build
-    runs-on:
-      - self-hosted
-      - linux
-      - x64
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

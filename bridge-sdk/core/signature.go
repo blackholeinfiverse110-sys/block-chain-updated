@@ -17,6 +17,7 @@ type SignatureVerifier struct {
 	verificationLog []SignatureVerificationLog
 	logMutex       sync.RWMutex
 	maxLogEntries  int
+	lastSeenNonces map[string]uint64
 }
 
 // SignatureVerificationLog records signature verification attempts
@@ -56,6 +57,7 @@ func NewSignatureVerifier(logger *logrus.Logger) *SignatureVerifier {
 		logger:        logger,
 		publicKeys:    make(map[string]ed25519.PublicKey),
 		maxLogEntries: 10000,
+		lastSeenNonces: make(map[string]uint64),
 	}
 }
 
@@ -123,6 +125,21 @@ func (sv *SignatureVerifier) VerifySignature(msg *SignedBridgeMessage) (bool, er
 		return false, fmt.Errorf("invalid Ed25519 signature size: expected %d bytes, got %d", ed25519.SignatureSize, len(signatureBytes))
 	}
 
+	// Check/update nonce to prevent replay attacks
+	sv.keysMutex.Lock()
+	if sv.lastSeenNonces == nil {
+		sv.lastSeenNonces = make(map[string]uint64)
+	}
+	lastNonce, exists := sv.lastSeenNonces[publicKeyHex]
+	if exists && msg.Message.Nonce <= lastNonce {
+		sv.keysMutex.Unlock()
+		svLogHex := hex.EncodeToString(msg.Signature[:min(len(msg.Signature), 8)])
+		sv.logVerificationAttempt(msg.Message.ID, msg.Message.SourceAddress, svLogHex, false, "replay attack: nonce too low")
+		return false, fmt.Errorf("replay attack detected: nonce %d has already been used or is too low (last seen: %d)", msg.Message.Nonce, lastNonce)
+	}
+	sv.lastSeenNonces[publicKeyHex] = msg.Message.Nonce
+	sv.keysMutex.Unlock()
+
 	// Create the message payload for verification
 	payload := &MessagePayload{
 		TransactionID:  msg.Message.ID,
@@ -133,8 +150,8 @@ func (sv *SignatureVerifier) VerifySignature(msg *SignedBridgeMessage) (bool, er
 		TokenSymbol:    msg.Message.TokenSymbol,
 		Amount:         msg.Message.Amount,
 		Fee:            msg.Message.Fee,
-		Nonce:          1,
-		Timestamp:      int64(0),
+		Nonce:          msg.Message.Nonce,
+		Timestamp:      0, // hardcoded timestamp for predictability in tests
 	}
 
 	// Serialize payload for signing
@@ -187,6 +204,19 @@ func (sv *SignatureVerifier) VerifySignatureWithPublicKey(msg *SignedBridgeMessa
 		return false, fmt.Errorf("invalid Ed25519 signature size")
 	}
 
+	// Check/update nonce to prevent replay attacks
+	sv.keysMutex.Lock()
+	if sv.lastSeenNonces == nil {
+		sv.lastSeenNonces = make(map[string]uint64)
+	}
+	lastNonce, exists := sv.lastSeenNonces[publicKeyHex]
+	if exists && msg.Message.Nonce <= lastNonce {
+		sv.keysMutex.Unlock()
+		return false, fmt.Errorf("replay attack detected: nonce %d has already been used or is too low (last seen: %d)", msg.Message.Nonce, lastNonce)
+	}
+	sv.lastSeenNonces[publicKeyHex] = msg.Message.Nonce
+	sv.keysMutex.Unlock()
+
 	// Create and serialize payload
 	payload := &MessagePayload{
 		TransactionID:  msg.Message.ID,
@@ -197,8 +227,8 @@ func (sv *SignatureVerifier) VerifySignatureWithPublicKey(msg *SignedBridgeMessa
 		TokenSymbol:    msg.Message.TokenSymbol,
 		Amount:         msg.Message.Amount,
 		Fee:            msg.Message.Fee,
-		Nonce:          1,
-		Timestamp:      int64(0),
+		Nonce:          msg.Message.Nonce,
+		Timestamp:      0,
 	}
 
 	payloadBytes, err := SerializePayload(payload)

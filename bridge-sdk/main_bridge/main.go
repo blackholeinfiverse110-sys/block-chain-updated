@@ -884,6 +884,7 @@ type RelayMessage struct {
 	Recipient   string    `json:"recipient"`
 	Signature   string    `json:"signature"`
 	Timestamp   time.Time `json:"timestamp"`
+	Nonce       uint64    `json:"nonce"`
 }
 
 type RelayLog struct {
@@ -2223,6 +2224,30 @@ func (sdk *BridgeSDK) addEvent(eventType, chain, txHash string, data map[string]
 		sdk.events = sdk.events[len(sdk.events)-1000:]
 	}
 
+	// Persist event root and attestation bundle per 10 events
+	if len(sdk.events) >= 10 && len(sdk.events)%10 == 0 {
+		rootsDir := "./bridge/internal/roots"
+		if sdk.config != nil && sdk.config.DatabasePath != "" {
+			rootsDir = filepath.Join(filepath.Dir(sdk.config.DatabasePath), "roots")
+		}
+
+		batchEvents := sdk.events[len(sdk.events)-10:]
+		rootID := fmt.Sprintf("root_%d", time.Now().UnixNano())
+		eventRoot := bridgesdk.NewEventRoot(rootID, chain)
+		for _, e := range batchEvents {
+			eventRoot.AddEvent(e)
+		}
+
+		go func() {
+			err := eventRoot.Save(rootsDir)
+			if err != nil {
+				sdk.logger.Errorf("Failed to save event root/attestation: %v", err)
+			} else {
+				sdk.logger.Infof("💾 Saved event root and attestation bundle for root: %s", eventRoot.RootHash)
+			}
+		}()
+	}
+
 	// Send event to relay server for real-time streaming
 	if sdk.relayServer != nil && sdk.relayServer.Status == "running" {
 		select {
@@ -2657,6 +2682,7 @@ func (sdk *BridgeSDK) handleRelayEth(w http.ResponseWriter, r *http.Request) {
 
 	// Validate required fields
 	if relayMsg.EventHash == "" || relayMsg.TxHash == "" || relayMsg.Signature == "" {
+		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   "Missing required fields: eventHash, txHash, signature",
@@ -2666,6 +2692,7 @@ func (sdk *BridgeSDK) handleRelayEth(w http.ResponseWriter, r *http.Request) {
 
 	// Verify signature
 	if !sdk.verifyRelaySignature(relayMsg) {
+		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   "Invalid signature",
@@ -2751,6 +2778,7 @@ func (sdk *BridgeSDK) handleRelaySol(w http.ResponseWriter, r *http.Request) {
 
 	// Validate required fields
 	if relayMsg.EventHash == "" || relayMsg.TxHash == "" || relayMsg.Signature == "" {
+		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   "Missing required fields: eventHash, txHash, signature",
@@ -2760,6 +2788,7 @@ func (sdk *BridgeSDK) handleRelaySol(w http.ResponseWriter, r *http.Request) {
 
 	// Verify signature
 	if !sdk.verifyRelaySignature(relayMsg) {
+		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   "Invalid signature",
@@ -2827,6 +2856,29 @@ func (sdk *BridgeSDK) handleRelaySol(w http.ResponseWriter, r *http.Request) {
 
 // DAY2 ADDITION: verifyRelaySignature verifies the signature of a relay message
 func (sdk *BridgeSDK) verifyRelaySignature(relayMsg RelayMessage) bool {
+	// Replay protection: check/update nonce for the sender
+	sdk.mu.Lock()
+	if sdk.simulations == nil {
+		sdk.simulations = make(map[string]map[string]interface{})
+	}
+	if sdk.simulations["nonces"] == nil {
+		sdk.simulations["nonces"] = make(map[string]interface{})
+	}
+	lastNonceVal, exists := sdk.simulations["nonces"][relayMsg.Sender]
+	var lastNonce uint64
+	if exists {
+		if ln, ok := lastNonceVal.(uint64); ok {
+			lastNonce = ln
+		}
+	}
+	if exists && relayMsg.Nonce <= lastNonce {
+		sdk.mu.Unlock()
+		sdk.logger.Warnf("🚫 Replay attack detected: nonce %d too low for sender %s (last: %d)", relayMsg.Nonce, relayMsg.Sender, lastNonce)
+		return false
+	}
+	sdk.simulations["nonces"][relayMsg.Sender] = relayMsg.Nonce
+	sdk.mu.Unlock()
+
 	// Create the message to sign (exclude signature field)
 	messageData := map[string]interface{}{
 		"eventHash":   relayMsg.EventHash,
@@ -2838,6 +2890,7 @@ func (sdk *BridgeSDK) verifyRelaySignature(relayMsg RelayMessage) bool {
 		"sender":      relayMsg.Sender,
 		"recipient":   relayMsg.Recipient,
 		"timestamp":   relayMsg.Timestamp.Format(time.RFC3339),
+		"nonce":       relayMsg.Nonce,
 	}
 
 	// Serialize to JSON for signing
@@ -6089,6 +6142,7 @@ func (sdk *BridgeSDK) StartWebServer(addr string) error {
 
 	// --- NEW: Log/Event/Status Endpoints ---
 	r.HandleFunc("/log/event", sdk.handleLogEvent).Methods("GET")
+	r.HandleFunc("/log/events", sdk.handleLogEvent).Methods("GET")
 	r.HandleFunc("/log/retry", sdk.handleLogRetry).Methods("GET")
 	r.HandleFunc("/bridge/status", sdk.handleBridgeStatus).Methods("GET")
 
@@ -6140,6 +6194,8 @@ func (sdk *BridgeSDK) StartWebServer(addr string) error {
 	r.HandleFunc("/relay/ws", sdk.handleRelayWebSocket)
 	r.HandleFunc("/relay/health", sdk.handleRelayHealth)
 	r.HandleFunc("/relay/stats", sdk.handleRelayStats)
+	r.HandleFunc("/relay/eth", sdk.handleRelayEth).Methods("POST")
+	r.HandleFunc("/relay/sol", sdk.handleRelaySol).Methods("POST")
 
 	// Performance monitoring endpoints
 	r.HandleFunc("/performance/metrics", sdk.handlePerformanceMetrics)

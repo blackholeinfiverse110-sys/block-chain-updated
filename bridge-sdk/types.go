@@ -21,6 +21,7 @@ type Transaction struct {
 	ProcessingTime string     `json:"processing_time,omitempty"`
 	Confirmations  int        `json:"confirmations"`
 	BlockNumber    uint64     `json:"block_number"`
+	Nonce          uint64     `json:"nonce"`
 }
 
 // Event represents a blockchain event

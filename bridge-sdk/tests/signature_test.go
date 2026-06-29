@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/sirupsen/logrus"
-	bridge "github.com/Shivam-Patel-G/blackhole-blockchain/bridge-sdk"
+	bridge "github.com/Shivam-Patel-G/blackhole-blockchain/bridge-sdk/core"
 )
 
 // TestSignatureVerificationBasic tests basic signature verification
@@ -22,7 +22,6 @@ func TestSignatureVerificationBasic(t *testing.T) {
 	}
 
 	publicKeyHex := hex.EncodeToString(publicKey)
-	privateKeyHex := hex.EncodeToString(privateKey)
 
 	// Create a test transaction
 	tx := &bridge.Transaction{
@@ -35,6 +34,7 @@ func TestSignatureVerificationBasic(t *testing.T) {
 		Amount:        "100.00",
 		Fee:           "1.00",
 		Status:        "pending",
+		Nonce:         1,
 	}
 
 	// Create payload and sign it
@@ -56,13 +56,18 @@ func TestSignatureVerificationBasic(t *testing.T) {
 	}
 
 	signature := ed25519.Sign(privateKey, payloadBytes)
-	signatureHex := hex.EncodeToString(signature)
 
 	// Create signed message
 	signedMsg := &bridge.SignedBridgeMessage{
 		Message:   tx,
-		Signature: signatureHex,
-		PublicKey: publicKeyHex,
+		Signature: signature,
+		PublicKey: publicKey,
+	}
+
+	// Register the key for address to simulate signature validation checks if needed
+	err = verifier.RegisterPublicKey(tx.SourceAddress, publicKeyHex)
+	if err != nil {
+		t.Fatalf("Failed to register public key: %v", err)
 	}
 
 	// Verify signature
@@ -87,8 +92,6 @@ func TestSignatureVerificationInvalidSignature(t *testing.T) {
 		t.Fatalf("Failed to generate keypair: %v", err)
 	}
 
-	publicKeyHex := hex.EncodeToString(publicKey)
-
 	// Create a test transaction
 	tx := &bridge.Transaction{
 		ID:            "test_tx_002",
@@ -102,13 +105,12 @@ func TestSignatureVerificationInvalidSignature(t *testing.T) {
 
 	// Create an invalid signature (all zeros)
 	invalidSignature := make([]byte, ed25519.SignatureSize)
-	invalidSignatureHex := hex.EncodeToString(invalidSignature)
 
 	// Create signed message with invalid signature
 	signedMsg := &bridge.SignedBridgeMessage{
 		Message:   tx,
-		Signature: invalidSignatureHex,
-		PublicKey: publicKeyHex,
+		Signature: invalidSignature,
+		PublicKey: publicKey,
 	}
 
 	// Verify signature - should fail
@@ -134,10 +136,11 @@ func TestSignatureVerificationMalformedKey(t *testing.T) {
 		DestChain:     "solana",
 	}
 
+	sig, _ := hex.DecodeString("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000") // 64 bytes
 	signedMsg := &bridge.SignedBridgeMessage{
 		Message:   tx,
-		Signature: "0000000000000000000000000000000000000000000000000000000000000000",
-		PublicKey: "invalid_hex_string",
+		Signature: sig,
+		PublicKey: []byte("invalid_hex_string"),
 	}
 
 	_, err := verifier.VerifySignature(signedMsg)
@@ -173,6 +176,7 @@ func TestPublicKeyRegistration(t *testing.T) {
 		DestChain:     "solana",
 		SourceAddress: address,
 		Amount:        "50.00",
+		Nonce:         1,
 	}
 
 	payload := &bridge.MessagePayload{
@@ -186,12 +190,11 @@ func TestPublicKeyRegistration(t *testing.T) {
 
 	payloadBytes, _ := bridge.SerializePayload(payload)
 	signature := ed25519.Sign(privateKey, payloadBytes)
-	signatureHex := hex.EncodeToString(signature)
 
 	signedMsg := &bridge.SignedBridgeMessage{
 		Message:   tx,
-		Signature: signatureHex,
-		PublicKey: publicKeyHex,
+		Signature: signature,
+		PublicKey: publicKey,
 	}
 
 	// Verify
@@ -220,10 +223,11 @@ func TestSignatureVerificationLog(t *testing.T) {
 		SourceAddress: "0xtest",
 	}
 
+	sig, _ := hex.DecodeString("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000") // 64 bytes
 	signedMsg := &bridge.SignedBridgeMessage{
 		Message:   tx,
-		Signature: "0000000000000000000000000000000000000000000000000000000000000000",
-		PublicKey: "invalid",
+		Signature: sig,
+		PublicKey: []byte("invalid"),
 	}
 
 	verifier.VerifySignature(signedMsg)
@@ -242,7 +246,6 @@ func BenchmarkSignatureVerification(b *testing.B) {
 
 	// Setup
 	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
-	publicKeyHex := hex.EncodeToString(publicKey)
 
 	tx := &bridge.Transaction{
 		ID:            "bench_tx",
@@ -263,12 +266,11 @@ func BenchmarkSignatureVerification(b *testing.B) {
 
 	payloadBytes, _ := bridge.SerializePayload(payload)
 	signature := ed25519.Sign(privateKey, payloadBytes)
-	signatureHex := hex.EncodeToString(signature)
 
 	signedMsg := &bridge.SignedBridgeMessage{
 		Message:   tx,
-		Signature: signatureHex,
-		PublicKey: publicKeyHex,
+		Signature: signature,
+		PublicKey: publicKey,
 	}
 
 	// Benchmark
@@ -277,3 +279,4 @@ func BenchmarkSignatureVerification(b *testing.B) {
 		verifier.VerifySignature(signedMsg)
 	}
 }
+

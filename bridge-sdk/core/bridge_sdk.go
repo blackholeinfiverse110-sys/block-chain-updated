@@ -1,17 +1,18 @@
 package bridgesdk
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 	"go.etcd.io/bbolt"
-	"encoding/json"
 )
 
 // Main BridgeSDK struct
@@ -354,6 +355,30 @@ func (sdk *BridgeSDK) addEvent(eventType, chain, txHash string, data map[string]
 	// Keep only last 1000 events
 	if len(sdk.events) > 1000 {
 		sdk.events = sdk.events[len(sdk.events)-1000:]
+	}
+
+	// Persist event root and attestation bundle per 10 events
+	if len(sdk.events) >= 10 && len(sdk.events)%10 == 0 {
+		rootsDir := "./bridge/internal/roots"
+		if sdk.config != nil && sdk.config.DatabasePath != "" {
+			rootsDir = filepath.Join(filepath.Dir(sdk.config.DatabasePath), "roots")
+		}
+
+		batchEvents := sdk.events[len(sdk.events)-10:]
+		rootID := fmt.Sprintf("root_%d", time.Now().UnixNano())
+		eventRoot := NewEventRoot(rootID, chain)
+		for _, e := range batchEvents {
+			eventRoot.AddEvent(e)
+		}
+
+		go func() {
+			err := eventRoot.Save(rootsDir)
+			if err != nil {
+				sdk.logger.Errorf("Failed to save event root/attestation: %v", err)
+			} else {
+				sdk.logger.Infof("💾 Saved event root and attestation bundle for root: %s", eventRoot.RootHash)
+			}
+		}()
 	}
 }
 

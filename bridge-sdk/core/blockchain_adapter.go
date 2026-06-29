@@ -31,6 +31,7 @@ type Transaction struct {
 	RetryCount     int        `json:"retry_count"`
 	LastRetryAt    *time.Time `json:"last_retry_at,omitempty"`
 	ProcessingTime string     `json:"processing_time,omitempty"`
+	Nonce          uint64     `json:"nonce"`
 }
 
 // Event represents a blockchain event

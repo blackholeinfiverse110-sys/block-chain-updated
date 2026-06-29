@@ -3,7 +3,13 @@ package bridgesdk
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"time"
+
+	"github.com/Shivam-Patel-G/blackhole-blockchain/bridge-sdk/core/attest"
 )
 
 type EventRoot struct {
@@ -36,6 +42,28 @@ func (er *EventRoot) GetStats() map[string]interface{} {
 		"duration":  time.Since(er.Timestamp).String(),
 		"avg_latency": calculateAvgLatency(er.Events),
 	}
+}
+
+// Save persists the event root JSON and generates the attestation bundle
+func (er *EventRoot) Save(rootsDir string) error {
+	err := os.MkdirAll(rootsDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create roots directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(er, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal event root: %w", err)
+	}
+
+	filename := filepath.Join(rootsDir, fmt.Sprintf("event_root_%s.json", er.RootHash))
+	err = os.WriteFile(filename, data, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write event root file: %w", err)
+	}
+
+	// Hook the attestation bundle creation alongside the roots
+	return attest.WriteAttestation(rootsDir, er.RootHash, er.Chain)
 }
 
 func generateRootHash(id string) string {

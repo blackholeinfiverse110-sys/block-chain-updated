@@ -1,0 +1,192 @@
+name: Production Infrastructure CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate:
+    name: Validate production deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+
+      - name: Run Go module validation
+        run: |
+          go test ./...
+
+      - name: Validate Docker Compose files
+        run: |
+          docker compose -f deploy/mainnet/docker-compose.yml config
+
+  build:
+    name: Build production images
+    runs-on: ubuntu-latest
+    needs: validate
+    outputs:
+      sha_short: ${{ steps.vars.outputs.sha_short }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set short git commit SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short=7 HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push blockchain node image
+        run: |
+          docker buildx build --push \
+            --tag bhiv/blackhole-node:${{ steps.vars.outputs.sha_short }} \
+            --tag bhiv/blackhole-node:latest \
+            -f deploy/mainnet/Dockerfile.blockchain .
+
+      - name: Build and push bridge image
+        run: |
+          docker buildx build --push \
+            --tag bhiv/blackhole-bridge:${{ steps.vars.outputs.sha_short }} \
+            --tag bhiv/blackhole-bridge:latest \
+            -f bridge-sdk/Dockerfile.bridge bridge-sdk
+
+      - name: Build and push wallet image
+        run: |
+          docker buildx build --push \
+            --tag bhiv/blackhole-wallet:${{ steps.vars.outputs.sha_short }} \
+            --tag bhiv/blackhole-wallet:latest \
+            -f services/wallet/Dockerfile services/wallet
+
+  deploy:
+    name: Deploy to self-hosted production runner
+    needs: build
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Confirm Docker availability
+        run: |
+          docker version
+          docker compose version
+
+      - name: Restore persistent Release History
+        run: |
+          mkdir -p docs
+          if [ -f /var/tmp/blackhole-bridge/RELEASE_HISTORY.md ]; then
+            cp /var/tmp/blackhole-bridge/RELEASE_HISTORY.md docs/RELEASE_HISTORY.md
+          fi
+
+      - name: Validate compose config before deploy
+        run: |
+          IMG_TAG=${{ needs.build.outputs.sha_short }} docker compose -f deploy/mainnet/docker-compose.yml config
+
+      - name: Deploy production stack
+        run: |
+          IMG_TAG=${{ needs.build.outputs.sha_short }} docker compose -f deploy/mainnet/docker-compose.yml pull
+          IMG_TAG=${{ needs.build.outputs.sha_short }} docker compose -f deploy/mainnet/docker-compose.yml up -d
+
+      - name: Verify deployment status
+        run: |
+          IMG_TAG=${{ needs.build.outputs.sha_short }} docker compose -f deploy/mainnet/docker-compose.yml ps
+
+      - name: Health Check
+        run: |
+          echo "Waiting for services to be healthy..."
+          for i in {1..12}; do
+            UNHEALTHY_COUNT=$(docker compose -f deploy/mainnet/docker-compose.yml ps --filter "status=running" --filter "health=unhealthy" -q | wc -l)
+            STARTING_COUNT=$(docker compose -f deploy/mainnet/docker-compose.yml ps --filter "status=running" --filter "health=starting" -q | wc -l)
+            if [ "$UNHEALTHY_COUNT" -eq 0 ] && [ "$STARTING_COUNT" -eq 0 ]; then
+              echo "All containers are healthy!"
+              exit 0
+            fi
+            echo "Status: $STARTING_COUNT starting, $UNHEALTHY_COUNT unhealthy. Retrying in 10s..."
+            sleep 10
+          done
+          echo "Health check failed!"
+          docker compose -f deploy/mainnet/docker-compose.yml ps
+          docker compose -f deploy/mainnet/docker-compose.yml logs --tail=50
+          exit 1
+
+      - name: Update Release Documentation on Success
+        if: success()
+        run: |
+          # Initialize release history file if not exists
+          if [ ! -f docs/RELEASE_HISTORY.md ]; then
+            mkdir -p docs
+            echo "# Release History and Deployment Registry" > docs/RELEASE_HISTORY.md
+            echo "" >> docs/RELEASE_HISTORY.md
+            echo "| Timestamp | Image Tag (Git SHA) | Status | Description |" >> docs/RELEASE_HISTORY.md
+            echo "|---|---|---|---|" >> docs/RELEASE_HISTORY.md
+          fi
+          
+          # Log success
+          echo "| $(date -u +'%Y-%m-%d %H:%M:%S UTC') | ${{ needs.build.outputs.sha_short }} | SUCCESS | Stable deployment |" >> docs/RELEASE_HISTORY.md
+
+      - name: Automatic Rollback on Failure
+        if: failure()
+        run: |
+          # Check if Release History exists and contains a successful tag
+          if [ -f docs/RELEASE_HISTORY.md ] && grep -qE "SUCCESS|ROLLBACK_SUCCESS" docs/RELEASE_HISTORY.md; then
+            LAST_HEALTHY_TAG=$(grep -E "SUCCESS|ROLLBACK_SUCCESS" docs/RELEASE_HISTORY.md | tail -n 1 | awk -F '|' '{print $3}' | tr -d '[:space:]')
+            echo "🚨 Deployment failed! Rolling back to last healthy tag from Release History: $LAST_HEALTHY_TAG"
+            
+            # Pull and deploy last healthy tag
+            IMG_TAG=$LAST_HEALTHY_TAG docker compose -f deploy/mainnet/docker-compose.yml pull
+            IMG_TAG=$LAST_HEALTHY_TAG docker compose -f deploy/mainnet/docker-compose.yml up -d
+            
+            # Post-Rollback Verification (Run health check again)
+            echo "Waiting for rollback services to be healthy..."
+            for i in {1..12}; do
+              UNHEALTHY_COUNT=$(docker compose -f deploy/mainnet/docker-compose.yml ps --filter "status=running" --filter "health=unhealthy" -q | wc -l)
+              STARTING_COUNT=$(docker compose -f deploy/mainnet/docker-compose.yml ps --filter "status=running" --filter "health=starting" -q | wc -l)
+              if [ "$UNHEALTHY_COUNT" -eq 0 ] && [ "$STARTING_COUNT" -eq 0 ]; then
+                echo "Rollback deployment is healthy!"
+                
+                # Update release history with successful rollback
+                echo "| $(date -u +'%Y-%m-%d %H:%M:%S UTC') | $LAST_HEALTHY_TAG | ROLLBACK_SUCCESS | Rollback from failed ${{ needs.build.outputs.sha_short }} is healthy |" >> docs/RELEASE_HISTORY.md
+                exit 0
+              fi
+              echo "Status: $STARTING_COUNT starting, $UNHEALTHY_COUNT unhealthy. Retrying in 10s..."
+              sleep 10
+            done
+            
+            echo "Rollback health check failed!"
+            echo "| $(date -u +'%Y-%m-%d %H:%M:%S UTC') | $LAST_HEALTHY_TAG | ROLLBACK_FAILED | Rollback from failed ${{ needs.build.outputs.sha_short }} failed health check |" >> docs/RELEASE_HISTORY.md
+            exit 1
+          else
+            echo "⚠️ No last healthy tag found in Release History. Cannot perform automatic rollback."
+            if [ ! -f docs/RELEASE_HISTORY.md ]; then
+              mkdir -p docs
+              echo "# Release History and Deployment Registry" > docs/RELEASE_HISTORY.md
+              echo "" >> docs/RELEASE_HISTORY.md
+              echo "| Timestamp | Image Tag (Git SHA) | Status | Description |" >> docs/RELEASE_HISTORY.md
+              echo "|---|---|---|---|" >> docs/RELEASE_HISTORY.md
+            fi
+            echo "| $(date -u +'%Y-%m-%d %H:%M:%S UTC') | ${{ needs.build.outputs.sha_short }} | FAILED | Deployment failed and no rollback tag was available |" >> docs/RELEASE_HISTORY.md
+            exit 1
+          fi
+
+      - name: Save persistent Release History
+        if: always()
+        run: |
+          if [ -f docs/RELEASE_HISTORY.md ]; then
+            mkdir -p /var/tmp/blackhole-bridge
+            cp docs/RELEASE_HISTORY.md /var/tmp/blackhole-bridge/RELEASE_HISTORY.md
+          fi

@@ -35,6 +35,7 @@ volumes:
 services:
   # Node 1 (Bootstrap/Seed Node)
   node1:
+    image: bhiv/blackhole-node:${IMG_TAG:-latest}
     build:
       context: ../../core/relay-chain
       dockerfile: ../../deploy/mainnet/Dockerfile.blockchain
@@ -64,6 +65,7 @@ services:
 
   # Node 2
   node2:
+    image: bhiv/blackhole-node:${IMG_TAG:-latest}
     build:
       context: ../../core/relay-chain
       dockerfile: ../../deploy/mainnet/Dockerfile.blockchain
@@ -94,6 +96,7 @@ services:
 
   # Node 3
   node3:
+    image: bhiv/blackhole-node:${IMG_TAG:-latest}
     build:
       context: ../../core/relay-chain
       dockerfile: ../../deploy/mainnet/Dockerfile.blockchain
@@ -124,6 +127,7 @@ services:
 
   # Node 4
   node4:
+    image: bhiv/blackhole-node:${IMG_TAG:-latest}
     build:
       context: ../../core/relay-chain
       dockerfile: ../../deploy/mainnet/Dockerfile.blockchain
@@ -154,6 +158,7 @@ services:
 
   # Node 5
   node5:
+    image: bhiv/blackhole-node:${IMG_TAG:-latest}
     build:
       context: ../../core/relay-chain
       dockerfile: ../../deploy/mainnet/Dockerfile.blockchain
@@ -184,6 +189,7 @@ services:
 
   # Bridge Service
   bridge:
+    image: bhiv/blackhole-bridge:${IMG_TAG:-latest}
     build:
       context: ../../bridge-sdk
       dockerfile: Dockerfile.bridge
@@ -219,6 +225,7 @@ services:
 
   # Wallet Service
   wallet:
+    image: bhiv/blackhole-wallet:${IMG_TAG:-latest}
     build:
       context: ../../services/wallet
       dockerfile: Dockerfile
